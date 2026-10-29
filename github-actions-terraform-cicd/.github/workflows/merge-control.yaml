@@ -1,0 +1,22 @@
+name: merge-control
+on:
+  pull_request:
+    types: [opened, synchronize, edited, reopened]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate promotion order
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          suffix() { sed -E 's/^[^-]+//' <<<"$1"; }
+          case "$BASE" in
+            main) [[ "$HEAD" == qa || "$HEAD" == qa-* ]] ;;
+            qa|qa-*) [[ "$HEAD" == "test$(suffix "$BASE")" ]] ;;
+            test|test-*) [[ "$HEAD" == "dev$(suffix "$BASE")" ]] ;;
+            dev|dev-*) exit 0 ;;
+            *) echo "Unsupported base branch: $BASE"; exit 1 ;;
+          esac

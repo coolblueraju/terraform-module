@@ -1,0 +1,50 @@
+name: Detect changed Lambdas
+description: Return Lambda keys affected by a Git commit range
+inputs:
+  app_short_name: { required: true }
+  terraform_workspace: { required: true }
+  environment_file: { required: true }
+  commit_sha: { required: false, default: "${{ github.sha }}" }
+  commit_before_sha: { required: false, default: '' }
+outputs:
+  deploy_lambda_code:
+    value: ${{ steps.detect.outputs.deploy_lambda_code }}
+  lambda_keys:
+    value: ${{ steps.detect.outputs.lambda_keys }}
+runs:
+  using: composite
+  steps:
+    - id: detect
+      shell: bash
+      run: |
+        set -euo pipefail
+        ENV_FILE="${{ inputs.environment_file }}"
+        all_keys() {
+          yq -r '[(.lambda_functions // {} | keys[]), (if .dispatcher_function then "dispatcher_function" else empty end), (.dispatcher_functions // {} | keys[])] | unique | .[]' "$ENV_FILE" 2>/dev/null || true
+        }
+        fail_open() {
+          local csv; csv=$(all_keys | sort -u | paste -sd, -)
+          echo "deploy_lambda_code=$([[ -n "$csv" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "lambda_keys=$csv" >> "$GITHUB_OUTPUT"
+        }
+        [[ -f "$ENV_FILE" ]] && command -v yq >/dev/null && command -v jq >/dev/null || { fail_open; exit 0; }
+        if [[ -n "${{ inputs.commit_before_sha }}" && "${{ inputs.commit_before_sha }}" != "0000000000000000000000000000000000000000" ]]; then
+          CHANGED=$(git diff --name-only "${{ inputs.commit_before_sha }}..${{ inputs.commit_sha }}" || true)
+        else
+          CHANGED=$(git diff-tree --no-commit-id --name-only -r "${{ inputs.commit_sha }}" || true)
+        fi
+        selected=()
+        while IFS= read -r key; do
+          [[ -z "$key" ]] && continue
+          project=$(yq -r ".lambda_functions."$key".project_path // """ "$ENV_FILE")
+          [[ -n "$project" ]] && grep -qE "^${{ inputs.app_short_name }}-code/${project%/*}(/|$)" <<<"$CHANGED" && selected+=("$key")
+        done < <(yq -r '.lambda_functions // {} | keys[]' "$ENV_FILE")
+        [[ $(yq -r '.dispatcher_function // null' "$ENV_FILE") != null ]] && selected+=(dispatcher_function)
+        while IFS= read -r key; do
+          [[ -z "$key" ]] && continue
+          project=$(yq -r ".dispatcher_functions."$key".project_path // """ "$ENV_FILE")
+          if [[ "$CHANGED" == *"$ENV_FILE"* ]] || { [[ -n "$project" ]] && grep -qE "^${{ inputs.app_short_name }}-code/${project%/*}(/|$)" <<<"$CHANGED"; }; then selected+=("$key"); fi
+        done < <(yq -r '.dispatcher_functions // {} | keys[]' "$ENV_FILE")
+        csv=$(for x in "${selected[@]:-}"; do echo "$x"; done | sed '/^$/d' | sort -u | paste -sd, -)
+        echo "deploy_lambda_code=$([[ -n "$csv" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        echo "lambda_keys=$csv" >> "$GITHUB_OUTPUT"

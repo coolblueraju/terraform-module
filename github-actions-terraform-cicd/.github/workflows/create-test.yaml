@@ -1,0 +1,344 @@
+name: Create test
+on:
+  push:
+    branches: [ 'test', 'test-*' ]
+    paths-ignore:
+      - '.github/workflows/destroy-test.yaml'
+      - 'README.md'
+env:
+  LAMBDA_MODULE_DIRECTORY_PATH: modules/lambda
+  LAMBDA_BUCKET_PATH: ${{ vars.APP_SHORT_NAME }}/lambda/terraform.tfstate
+  S3_MODULE_DIRECTORY_PATH: modules/s3
+  S3_BUCKET_PATH: ${{ vars.APP_SHORT_NAME }}/s3/terraform.tfstate
+  PARAMETERSTORE_MODULE_DIRECTORY_PATH: modules/parameterstore
+  PARAMETERSTORE_BUCKET_PATH: ${{ vars.APP_SHORT_NAME }}/parameterstore/terraform.tfstate
+  ECR_MODULE_DIRECTORY_PATH: modules/ecr
+  ECR_BUCKET_PATH: ${{ vars.APP_SHORT_NAME }}/ecr/terraform.tfstate
+  ECS_MODULE_DIRECTORY_PATH: modules/ecs
+  ECS_BUCKET_PATH: ${{ vars.APP_SHORT_NAME }}/ecs/terraform.tfstate
+  DYNAMODB_MODULE_DIRECTORY_PATH: modules/dynamodb
+  DYNAMODB_BUCKET_PATH: ${{ vars.APP_SHORT_NAME }}/dynamodb/terraform.tfstate
+  STEPFUNCTIONS_MODULE_DIRECTORY_PATH: modules/stepfunctions
+  STEPFUNCTIONS_BUCKET_PATH: ${{ vars.APP_SHORT_NAME }}/stepfunctions/terraform.tfstate
+  BATCH_MODULE_DIRECTORY_PATH: modules/batch
+  BATCH_BUCKET_PATH: ${{ vars.APP_SHORT_NAME }}/batch/terraform.tfstate
+  EVENTBRIDGE_MODULE_DIRECTORY_PATH: modules/eventbridge
+  EVENTBRIDGE_BUCKET_PATH: ${{ vars.APP_SHORT_NAME }}/eventbridge/terraform.tfstate
+  BUDGET_MODULE_DIRECTORY_PATH: modules/budget
+  BUDGET_BUCKET_PATH: ${{ vars.APP_SHORT_NAME }}/budget/terraform.tfstate
+  STATE_BUCKET_NAME: umb-pre-engineered-central-tf-state
+  AWS_ACCOUNT_NUMBER_SHARED: ${{ vars.AWS_ACCOUNT_NUMBER_SHARED }}
+  ALB_SHORT_NAME: ${{ vars.ALB_SHORT_NAME }}
+  APP_SHORT_NAME: ${{ vars.APP_SHORT_NAME }}
+  AWS_ACCOUNT_NUMBER: ${{ vars.AWS_ACCOUNT_NUMBER }}
+  AWS_REGION: us-east-2
+  WORKSPACE: test
+  APPLICATION_OWNER_EMAIL: ${{ vars.APPLICATION_OWNER_EMAIL }}
+  PROJECT_RITM: ${{ vars.PROJECT_RITM }}
+  CMDB_ID: ${{ vars.CMDB_ID }}
+  PE_VERSION: V5.0.0
+jobs:
+  create_lambda_infra_test:
+    environment: test
+    runs-on: prd-docker
+    permissions: { id-token: write, contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: ./.github/actions/deploy-to-aws/create
+        with:
+          state_bucket_name: ${{ env.STATE_BUCKET_NAME }}
+          bucket_path: ${{ env.LAMBDA_BUCKET_PATH }}
+          aws_account_number: ${{ env.AWS_ACCOUNT_NUMBER }}
+          aws_account_number_shared: ${{ env.AWS_ACCOUNT_NUMBER_SHARED }}
+          aws_github_gh_token: ${{ secrets.PRE_ENG_GH_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          alb_short_name: ${{ env.ALB_SHORT_NAME }}
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          tf_directory_path: ${{ env.LAMBDA_MODULE_DIRECTORY_PATH }}
+          application_owner_email: ${{ env.APPLICATION_OWNER_EMAIL }}
+          project_ritm: ${{ env.PROJECT_RITM }}
+          git_repo_name: ${{ github.repository }}
+          cmdb_id: ${{ env.CMDB_ID }}
+          deploy: true
+      - id: changed
+        uses: ./.github/actions/build-and-deploy-lambdas/detect-changed-lambdas
+        with:
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          environment_file: ${{ env.APP_SHORT_NAME }}-code/environments/test.yaml
+          commit_sha: ${{ github.sha }}
+          commit_before_sha: ${{ github.event.before }}
+      - if: steps.changed.outputs.deploy_lambda_code == 'true'
+        uses: ./.github/actions/build-and-deploy-lambdas
+        with:
+          aws_account_number: ${{ env.AWS_ACCOUNT_NUMBER }}
+          aws_region: ${{ env.AWS_REGION }}
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          code_directory: ${{ env.APP_SHORT_NAME }}-code
+          environment_file: ${{ env.APP_SHORT_NAME }}-code/environments/test.yaml
+          lambda_keys: ${{ steps.changed.outputs.lambda_keys }}
+          nexus_username: ${{ vars.NEXUS_PROD_USERNAME }}
+          nexus_password: ${{ secrets.NEXUS_PROD_PASSWORD }}
+  create_s3_infra_test:
+    needs: [create_lambda_infra_test]
+    environment: test
+    runs-on: prd-docker
+    permissions: { id-token: write, contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: ./.github/actions/deploy-to-aws/create
+        with:
+          state_bucket_name: ${{ env.STATE_BUCKET_NAME }}
+          bucket_path: ${{ env.S3_BUCKET_PATH }}
+          aws_account_number: ${{ env.AWS_ACCOUNT_NUMBER }}
+          aws_account_number_shared: ${{ env.AWS_ACCOUNT_NUMBER_SHARED }}
+          aws_github_gh_token: ${{ secrets.PRE_ENG_GH_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          alb_short_name: ${{ env.ALB_SHORT_NAME }}
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          tf_directory_path: ${{ env.S3_MODULE_DIRECTORY_PATH }}
+          application_owner_email: ${{ env.APPLICATION_OWNER_EMAIL }}
+          project_ritm: ${{ env.PROJECT_RITM }}
+          git_repo_name: ${{ github.repository }}
+          cmdb_id: ${{ env.CMDB_ID }}
+          deploy: true
+  create_parameterstore_infra_test:
+    needs: [create_s3_infra_test]
+    environment: test
+    runs-on: prd-docker
+    permissions: { id-token: write, contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: ./.github/actions/deploy-to-aws/create
+        with:
+          state_bucket_name: ${{ env.STATE_BUCKET_NAME }}
+          bucket_path: ${{ env.PARAMETERSTORE_BUCKET_PATH }}
+          aws_account_number: ${{ env.AWS_ACCOUNT_NUMBER }}
+          aws_account_number_shared: ${{ env.AWS_ACCOUNT_NUMBER_SHARED }}
+          aws_github_gh_token: ${{ secrets.PRE_ENG_GH_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          alb_short_name: ${{ env.ALB_SHORT_NAME }}
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          tf_directory_path: ${{ env.PARAMETERSTORE_MODULE_DIRECTORY_PATH }}
+          application_owner_email: ${{ env.APPLICATION_OWNER_EMAIL }}
+          project_ritm: ${{ env.PROJECT_RITM }}
+          git_repo_name: ${{ github.repository }}
+          cmdb_id: ${{ env.CMDB_ID }}
+          deploy: true
+  create_ecr_infra_test:
+    needs: [create_parameterstore_infra_test]
+    environment: test
+    runs-on: prd-docker
+    permissions: { id-token: write, contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: ./.github/actions/deploy-to-aws/create
+        with:
+          state_bucket_name: ${{ env.STATE_BUCKET_NAME }}
+          bucket_path: ${{ env.ECR_BUCKET_PATH }}
+          aws_account_number: ${{ env.AWS_ACCOUNT_NUMBER }}
+          aws_account_number_shared: ${{ env.AWS_ACCOUNT_NUMBER_SHARED }}
+          aws_github_gh_token: ${{ secrets.PRE_ENG_GH_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          alb_short_name: ${{ env.ALB_SHORT_NAME }}
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          tf_directory_path: ${{ env.ECR_MODULE_DIRECTORY_PATH }}
+          application_owner_email: ${{ env.APPLICATION_OWNER_EMAIL }}
+          project_ritm: ${{ env.PROJECT_RITM }}
+          git_repo_name: ${{ github.repository }}
+          cmdb_id: ${{ env.CMDB_ID }}
+          deploy: true
+  build_and_store_image_to_ecr_test:
+    needs: [create_ecr_infra_test]
+    environment: test
+    runs-on: prd-docker
+    permissions: { id-token: write, contents: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Build or promote image
+        shell: bash
+        run: |
+          set -euo pipefail
+          CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::${{ env.AWS_ACCOUNT_NUMBER }}:role/TargetDeploymentRole" --role-session-name gha-image)
+          export AWS_ACCESS_KEY_ID=$(jq -r .Credentials.AccessKeyId <<<"$CREDS") AWS_SECRET_ACCESS_KEY=$(jq -r .Credentials.SecretAccessKey <<<"$CREDS") AWS_SESSION_TOKEN=$(jq -r .Credentials.SessionToken <<<"$CREDS")
+          aws ecr get-login-password --region "${{ env.AWS_REGION }}" | docker login --username AWS --password-stdin "${{ env.AWS_ACCOUNT_NUMBER }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          echo "${{ secrets.NEXUS_PROD_PASSWORD }}" | docker login nexus.example.internal --username "${{ vars.NEXUS_PROD_USERNAME }}" --password-stdin
+          TAG="test-${GITHUB_SHA::8}"
+          IMAGE="nexus.example.internal/${APP_SHORT_NAME}:$TAG"
+          docker build -t "$IMAGE" "${APP_SHORT_NAME}-code"
+          docker push "$IMAGE"
+          docker tag "$IMAGE" "${AWS_ACCOUNT_NUMBER}.dkr.ecr.${AWS_REGION}.amazonaws.com/${APP_SHORT_NAME}:$TAG"
+          docker push "${AWS_ACCOUNT_NUMBER}.dkr.ecr.${AWS_REGION}.amazonaws.com/${APP_SHORT_NAME}:$TAG"
+  create_app_infra_test:
+    needs: [build_and_store_image_to_ecr_test]
+    if: ${{ false }}
+    environment: test
+    runs-on: prd-docker
+    permissions: { id-token: write, contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: ./.github/actions/deploy-to-aws/create
+        with:
+          state_bucket_name: ${{ env.STATE_BUCKET_NAME }}
+          bucket_path: ${{ env.ECS_BUCKET_PATH }}
+          aws_account_number: ${{ env.AWS_ACCOUNT_NUMBER }}
+          aws_account_number_shared: ${{ env.AWS_ACCOUNT_NUMBER_SHARED }}
+          aws_github_gh_token: ${{ secrets.PRE_ENG_GH_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          alb_short_name: ${{ env.ALB_SHORT_NAME }}
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          tf_directory_path: ${{ env.ECS_MODULE_DIRECTORY_PATH }}
+          application_owner_email: ${{ env.APPLICATION_OWNER_EMAIL }}
+          project_ritm: ${{ env.PROJECT_RITM }}
+          git_repo_name: ${{ github.repository }}
+          cmdb_id: ${{ env.CMDB_ID }}
+          deploy: true
+  store_repo_details_in_db_test:
+    needs: [build_and_store_image_to_ecr_test]
+    environment: test
+    runs-on: prd-docker
+    steps:
+      - run: aws dynamodb put-item --table-name pre-engineered-repo-list --item '{"repo":{"S":"${{ github.repository }}"},"environment":{"S":"test"},"status":{"S":"deployed"}}'
+  create_dynamodb_infra_test:
+    environment: test
+    runs-on: prd-docker
+    permissions: { id-token: write, contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: ./.github/actions/deploy-to-aws/create
+        with:
+          state_bucket_name: ${{ env.STATE_BUCKET_NAME }}
+          bucket_path: ${{ env.DYNAMODB_BUCKET_PATH }}
+          aws_account_number: ${{ env.AWS_ACCOUNT_NUMBER }}
+          aws_account_number_shared: ${{ env.AWS_ACCOUNT_NUMBER_SHARED }}
+          aws_github_gh_token: ${{ secrets.PRE_ENG_GH_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          alb_short_name: ${{ env.ALB_SHORT_NAME }}
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          tf_directory_path: ${{ env.DYNAMODB_MODULE_DIRECTORY_PATH }}
+          application_owner_email: ${{ env.APPLICATION_OWNER_EMAIL }}
+          project_ritm: ${{ env.PROJECT_RITM }}
+          git_repo_name: ${{ github.repository }}
+          cmdb_id: ${{ env.CMDB_ID }}
+          deploy: true
+  create_stepfunctions_infra_test:
+    needs: [create_dynamodb_infra_test]
+    environment: test
+    runs-on: prd-docker
+    permissions: { id-token: write, contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: ./.github/actions/deploy-to-aws/create
+        with:
+          state_bucket_name: ${{ env.STATE_BUCKET_NAME }}
+          bucket_path: ${{ env.STEPFUNCTIONS_BUCKET_PATH }}
+          aws_account_number: ${{ env.AWS_ACCOUNT_NUMBER }}
+          aws_account_number_shared: ${{ env.AWS_ACCOUNT_NUMBER_SHARED }}
+          aws_github_gh_token: ${{ secrets.PRE_ENG_GH_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          alb_short_name: ${{ env.ALB_SHORT_NAME }}
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          tf_directory_path: ${{ env.STEPFUNCTIONS_MODULE_DIRECTORY_PATH }}
+          application_owner_email: ${{ env.APPLICATION_OWNER_EMAIL }}
+          project_ritm: ${{ env.PROJECT_RITM }}
+          git_repo_name: ${{ github.repository }}
+          cmdb_id: ${{ env.CMDB_ID }}
+          deploy: true
+  create_batch_infra_test:
+    needs: [create_stepfunctions_infra_test]
+    environment: test
+    runs-on: prd-docker
+    permissions: { id-token: write, contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: ./.github/actions/deploy-to-aws/create
+        with:
+          state_bucket_name: ${{ env.STATE_BUCKET_NAME }}
+          bucket_path: ${{ env.BATCH_BUCKET_PATH }}
+          aws_account_number: ${{ env.AWS_ACCOUNT_NUMBER }}
+          aws_account_number_shared: ${{ env.AWS_ACCOUNT_NUMBER_SHARED }}
+          aws_github_gh_token: ${{ secrets.PRE_ENG_GH_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          alb_short_name: ${{ env.ALB_SHORT_NAME }}
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          tf_directory_path: ${{ env.BATCH_MODULE_DIRECTORY_PATH }}
+          application_owner_email: ${{ env.APPLICATION_OWNER_EMAIL }}
+          project_ritm: ${{ env.PROJECT_RITM }}
+          git_repo_name: ${{ github.repository }}
+          cmdb_id: ${{ env.CMDB_ID }}
+          deploy: true
+  build_batch_and_store_image_to_ecr_test:
+    needs: [create_batch_infra_test]
+    environment: test
+    runs-on: prd-docker
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Build each enabled batch image defined in ${{ env.APP_SHORT_NAME }}-code/environments/test.yaml and push to ECR"
+  create_eventbridge_infra_test:
+    needs: [build_batch_and_store_image_to_ecr_test]
+    environment: test
+    runs-on: prd-docker
+    permissions: { id-token: write, contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: ./.github/actions/deploy-to-aws/create
+        with:
+          state_bucket_name: ${{ env.STATE_BUCKET_NAME }}
+          bucket_path: ${{ env.EVENTBRIDGE_BUCKET_PATH }}
+          aws_account_number: ${{ env.AWS_ACCOUNT_NUMBER }}
+          aws_account_number_shared: ${{ env.AWS_ACCOUNT_NUMBER_SHARED }}
+          aws_github_gh_token: ${{ secrets.PRE_ENG_GH_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          alb_short_name: ${{ env.ALB_SHORT_NAME }}
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          tf_directory_path: ${{ env.EVENTBRIDGE_MODULE_DIRECTORY_PATH }}
+          application_owner_email: ${{ env.APPLICATION_OWNER_EMAIL }}
+          project_ritm: ${{ env.PROJECT_RITM }}
+          git_repo_name: ${{ github.repository }}
+          cmdb_id: ${{ env.CMDB_ID }}
+          deploy: true
+  create_budget_infra_test:
+    needs: [create_eventbridge_infra_test]
+    environment: test
+    runs-on: prd-docker
+    permissions: { id-token: write, contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: ./.github/actions/deploy-to-aws/create
+        with:
+          state_bucket_name: ${{ env.STATE_BUCKET_NAME }}
+          bucket_path: ${{ env.BUDGET_BUCKET_PATH }}
+          aws_account_number: ${{ env.AWS_ACCOUNT_NUMBER }}
+          aws_account_number_shared: ${{ env.AWS_ACCOUNT_NUMBER_SHARED }}
+          aws_github_gh_token: ${{ secrets.PRE_ENG_GH_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          terraform_workspace: ${{ env.WORKSPACE }}
+          alb_short_name: ${{ env.ALB_SHORT_NAME }}
+          app_short_name: ${{ env.APP_SHORT_NAME }}
+          tf_directory_path: ${{ env.BUDGET_MODULE_DIRECTORY_PATH }}
+          application_owner_email: ${{ env.APPLICATION_OWNER_EMAIL }}
+          project_ritm: ${{ env.PROJECT_RITM }}
+          git_repo_name: ${{ github.repository }}
+          cmdb_id: ${{ env.CMDB_ID }}
+          deploy: true

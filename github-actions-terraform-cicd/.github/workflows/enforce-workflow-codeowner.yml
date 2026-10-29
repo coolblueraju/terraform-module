@@ -1,0 +1,19 @@
+name: enforce-workflow-codeowner
+on: pull_request
+permissions: { contents: read, pull-requests: read }
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ github.event.pull_request.base.sha }}' }
+      - name: Require workflow owner approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          files=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.number }}/files" --paginate --jq '.[].filename')
+          grep -q '^.github/workflows/' <<<"$files" || exit 0
+          owners=$(awk '!/^#/ && ($1==".github/" || $1==".github/**" || $1==".github/workflows/" || $1==".github/workflows/**") {for(i=2;i<=NF;i++) print $i}' .github/CODEOWNERS | sed 's/^@//' | sort -u)
+          approved=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.number }}/reviews" --jq '.[]|select(.state=="APPROVED")|.user.login' | sort -u)
+          comm -12 <(echo "$owners") <(echo "$approved") | grep -q . || { echo "CODEOWNER approval required"; exit 1; }

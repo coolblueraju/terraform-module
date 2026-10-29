@@ -1,0 +1,56 @@
+name: Build and deploy Lambdas
+description: Build selected .NET, Python and Node.js Lambda packages and deploy them
+inputs:
+  aws_account_number: { required: true }
+  aws_region: { required: true }
+  app_short_name: { required: true }
+  terraform_workspace: { required: true }
+  code_directory: { required: true }
+  environment_file: { required: true }
+  lambda_keys: { required: false, default: '' }
+  nexus_username: { required: true }
+  nexus_password: { required: true }
+  role_name: { required: false, default: TargetDeploymentRole }
+  nuget_config_path: { required: false, default: NuGet.config }
+outputs:
+  deployed_count:
+    value: ${{ steps.deploy.outputs.deployed_count }}
+runs:
+  using: composite
+  steps:
+    - id: deploy
+      shell: bash
+      run: |
+        set -euo pipefail
+        for c in aws docker jq yq zip; do command -v "$c" >/dev/null || { echo "Missing $c"; exit 1; }; done
+        CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::${{ inputs.aws_account_number }}:role/${{ inputs.role_name }}" --role-session-name gha-lambda)
+        export AWS_ACCESS_KEY_ID=$(jq -r .Credentials.AccessKeyId <<<"$CREDS")
+        export AWS_SECRET_ACCESS_KEY=$(jq -r .Credentials.SecretAccessKey <<<"$CREDS")
+        export AWS_SESSION_TOKEN=$(jq -r .Credentials.SessionToken <<<"$CREDS") AWS_DEFAULT_REGION="${{ inputs.aws_region }}"
+        FILTER=",${{ inputs.lambda_keys }},"; COUNT=0; TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+        entries=$(yq -o=json '{lambda_functions:(.lambda_functions // {}),dispatcher_functions:(.dispatcher_functions // {}),dispatcher_function:(.dispatcher_function // null),s3:(.s3 // {})}' "${{ inputs.environment_file }}")
+        jq -r '.lambda_functions|to_entries[]|[.key,.value.runtime,.value.lambda_name,.value.project_path,(.value.create_lambda//true)]|@tsv' <<<"$entries" > "$TMP/list"
+        jq -r '.dispatcher_functions|to_entries[]|[.key,(.value.runtime//""),(.value.lambda_name//""),(.value.project_path//""),true]|@tsv' <<<"$entries" >> "$TMP/list"
+        if [[ $(jq -r '.dispatcher_function' <<<"$entries") != null ]]; then jq -r '.dispatcher_function|["dispatcher_function",(.runtime//""),(.lambda_name//""),(.project_path//""),true]|@tsv' <<<"$entries" >> "$TMP/list"; fi
+        while IFS=$'	' read -r key runtime name project enabled; do
+          [[ "$enabled" == true && -n "$runtime" && -n "$name" && -n "$project" ]] || continue
+          [[ -z "${{ inputs.lambda_keys }}" || "$FILTER" == *",$key,"* ]] || continue
+          src="${{ inputs.code_directory }}/$project"; out="$TMP/$key"; mkdir -p "$out"
+          case "$runtime" in
+            dotnet*) docker run --rm -v "$PWD:/repo" -w "/repo/$src" mcr.microsoft.com/dotnet/sdk:8.0 bash -lc "dotnet restore --configfile /repo/${{ inputs.nuget_config_path }} && dotnet publish -c Release -o /tmp/out && cp -a /tmp/out/. /repo/$out/" ;;
+            python*) docker run --rm -v "$PWD:/repo" -w "/repo/$src" "public.ecr.aws/sam/build-$runtime:latest" bash -lc "pip install -r requirements.txt -t /tmp/out 2>/dev/null || true; cp -a . /tmp/out/; cp -a /tmp/out/. /repo/$out/" ;;
+            nodejs*) docker run --rm -v "$PWD:/repo" -w "/repo/$src" "node:${runtime#nodejs}-bookworm" bash -lc "npm ci --omit=dev; cp -a . /repo/$out/" ;;
+            *) echo "Unsupported runtime $runtime; skipping"; continue ;;
+          esac
+          (cd "$out" && zip -qr "$TMP/$key.zip" .)
+          if aws lambda get-function --function-name "$name" >/dev/null 2>&1; then
+            aws lambda update-function-code --function-name "$name" --zip-file "fileb://$TMP/$key.zip" >/dev/null
+          else
+            role=$(yq -r ".lambda_functions."$key".role_arn // .dispatcher_functions."$key".role_arn // .dispatcher_function.role_arn // """ "${{ inputs.environment_file }}")
+            handler=$(yq -r ".lambda_functions."$key".handler // .dispatcher_functions."$key".handler // .dispatcher_function.handler // """ "${{ inputs.environment_file }}")
+            [[ -n "$role" && -n "$handler" ]] || { echo "Cannot create $name: role_arn/handler missing"; exit 1; }
+            aws lambda create-function --function-name "$name" --runtime "$runtime" --role "$role" --handler "$handler" --zip-file "fileb://$TMP/$key.zip" >/dev/null
+          fi
+          COUNT=$((COUNT+1))
+        done < "$TMP/list"
+        echo "deployed_count=$COUNT" >> "$GITHUB_OUTPUT"

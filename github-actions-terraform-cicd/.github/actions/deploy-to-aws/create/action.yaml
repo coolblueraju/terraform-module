@@ -1,0 +1,65 @@
+name: Terraform Create
+description: Terraform init, workspace selection, plan and create
+inputs:
+  state_bucket_name: { required: true }
+  bucket_path: { required: true }
+  aws_account_number: { required: true }
+  aws_account_number_shared: { required: true }
+  aws_github_gh_token: { required: true }
+  aws_region: { required: true }
+  terraform_workspace: { required: true }
+  deploy: { required: false, default: 'false' }
+  app_short_name: { required: true }
+  alb_short_name: { required: true }
+  tf_directory_path: { required: true }
+  application_owner_email: { required: true }
+  project_ritm: { required: true }
+  git_repo_name: { required: true }
+  cmdb_id: { required: true }
+runs:
+  using: composite
+  steps:
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: '1.5.7'
+    - name: Configure private module access
+      shell: bash
+      run: |
+        git config --global url."https://x-access-token:${{ inputs.aws_github_gh_token }}@github.com/UMBFC/".insteadOf "https://github.com/UMBFC/"
+    - name: Assume deployment role
+      shell: bash
+      run: |
+        set -euo pipefail
+        CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::${{ inputs.aws_account_number }}:role/TargetDeploymentRole" --role-session-name gha-terraform)
+        echo "AWS_ACCESS_KEY_ID=$(jq -r .Credentials.AccessKeyId <<<"$CREDS")" >> "$GITHUB_ENV"
+        echo "AWS_SECRET_ACCESS_KEY=$(jq -r .Credentials.SecretAccessKey <<<"$CREDS")" >> "$GITHUB_ENV"
+        echo "AWS_SESSION_TOKEN=$(jq -r .Credentials.SessionToken <<<"$CREDS")" >> "$GITHUB_ENV"
+        echo "AWS_DEFAULT_REGION=${{ inputs.aws_region }}" >> "$GITHUB_ENV"
+    - name: Terraform init and workspace
+      shell: bash
+      working-directory: ${{ inputs.tf_directory_path }}
+      env:
+        TF_VAR_aws_account_number: ${{ inputs.aws_account_number }}
+        TF_VAR_aws_account_number_shared: ${{ inputs.aws_account_number_shared }}
+        TF_VAR_aws_region: ${{ inputs.aws_region }}
+        TF_VAR_terraform_workspace: ${{ inputs.terraform_workspace }}
+        TF_VAR_app_short_name: ${{ inputs.app_short_name }}
+        TF_VAR_alb_short_name: ${{ inputs.alb_short_name }}
+        TF_VAR_application_owner_email: ${{ inputs.application_owner_email }}
+        TF_VAR_project_ritm: ${{ inputs.project_ritm }}
+        TF_VAR_git_repo_name: ${{ inputs.git_repo_name }}
+        TF_VAR_cmdb_id: ${{ inputs.cmdb_id }}
+      run: |
+        set -euo pipefail
+        terraform init -input=false \
+          -backend-config="bucket=${{ inputs.state_bucket_name }}" \
+          -backend-config="key=${{ inputs.bucket_path }}" \
+          -backend-config="region=${{ inputs.aws_region }}" \
+          -backend-config="role_arn=arn:aws:iam::${{ inputs.aws_account_number_shared }}:role/centralized-tfstate-mgmt-role"
+        terraform workspace select "${{ inputs.terraform_workspace }}" || terraform workspace new "${{ inputs.terraform_workspace }}"
+        if [[ "${{ inputs.deploy }}" == "true" ]]; then
+          terraform apply --auto-approve
+          rm -rf ".terraform/environment" "${{ inputs.terraform_workspace }}" || true
+        else
+          terraform plan -input=false
+        fi

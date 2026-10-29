@@ -1,0 +1,15 @@
+name: merge_rules
+on: pull_request
+jobs:
+  prevent-trigger-collisions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mikefarah/yq@v4
+      - run: |
+          set -euo pipefail
+          for env in test qa prod; do
+            c=$(yq -r '.on.push.branches[0] // "workflow_dispatch"' ".github/workflows/create-$env.yaml")
+            d=$(yq -r '.on.push.branches[0] // "workflow_dispatch"' ".github/workflows/destroy-$env.yaml")
+            [[ "$c" != "$d" ]] || { echo "Collision for $env: $c"; exit 1; }
+          done
